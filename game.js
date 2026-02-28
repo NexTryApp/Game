@@ -33,9 +33,10 @@ let player = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, wingT: 0, size: 28, speed: 32
 
 // ---- Objects ----
 let bubbles = [], enemyBirds = [], gnats = [], floatTexts = [], fragments = [];
-let fires = [], waterDrops = [], mice = [], steamParts = [], gnatBubs = [], rainDrops = [];
+let fires = [], waterDrops = [], mice = [], steamParts = [], gnatBubs = [], rainDrops = [], worms = [];
 let bossBird = null, bossTimer = 0;
 let superPower = 0;
+let dino = null; // { x, y, vx, hp, t, shaking, shakeT, state }
 
 // ---- Parallax layers ----
 let clouds = [], mountains = [], treesLayer = [];
@@ -47,17 +48,18 @@ let nest = {
     shield: 0,         // shield HP (0=none, decays over time)
     shieldMax: 200,
     feedRadius: 50,    // how close player must be to feed
-    carryingGnat: false // player picked up a gnat to deliver
+    carryingGnat: false, // player picked up a gnat to deliver
+    carryingWorm: false  // worm feeds chick more
 };
 
 // ---- Timers ----
-let tmrBub = 0, tmrBird = 0, tmrGnat = 0, tmrMouse = 0, tmrGnatBub = 0;
+let tmrBub = 0, tmrBird = 0, tmrGnat = 0, tmrMouse = 0, tmrGnatBub = 0, tmrWorm = 0;
 let transitionTimer = 0, transitionText = '', transitionDesc = '';
 let lastTime = 0;
 
 // ---- Level features ----
 function has(f) {
-    const m = { gnats: 2, traps: 2, night: 3, chick1: 4, gold: 4, chick2: 5, chain: 5, boss: 6, storm: 7, fire: 8 };
+    const m = { gnats: 2, traps: 2, night: 3, chick1: 4, gold: 4, chick2: 5, chain: 5, boss: 6, storm: 7, fire: 8, dino: 9 };
     return level >= (m[f] || 99);
 }
 
@@ -181,7 +183,8 @@ function drawBackground(dt) {
     });
 
     // ---- BIG FOREGROUND NEST TREE (right side, 2/3 screen height) ----
-    const nestTreeX = W - 90;          // right side
+    const treeShake = (dino && dino.shaking) ? Math.sin(elapsed * 40) * 5 : 0;
+    const nestTreeX = W - 90 + treeShake;  // right side (shakes when dino attacks)
     const nestTreeW = 60;              // trunk width
     const nestTreeH = H * 0.67;        // 2/3 of screen
     const nestTreeBase = seaY;
@@ -350,51 +353,61 @@ function drawNest(x, y, w) {
     // Chicks
     nest.chicks.forEach((ch, ci) => {
         ch.t += 0.016;
-        const cx = x + (ci === 0 ? -8 : 8);
-        const cy = y - 8;
+        const grown = ch.grown || false;
+        const sz = grown ? 1.6 : 1; // grown chicks are 60% bigger
+        const cx = x + (ci === 0 ? -10 * sz : ci === 1 ? 10 * sz : 0);
+        const cy = y - 8 * sz;
         const sleeping = isNight;
         const bob = sleeping ? 0 : Math.sin(ch.t * 3 + ci) * 1.5;
 
-        // Body (fluffy yellow)
-        X.fillStyle = '#ffdd44';
-        X.beginPath(); X.arc(cx, cy + bob, 5, 0, Math.PI * 2); X.fill();
+        // Body (fluffy yellow, bigger if grown)
+        X.fillStyle = grown ? '#eebb33' : '#ffdd44';
+        X.beginPath(); X.arc(cx, cy + bob, 5 * sz, 0, Math.PI * 2); X.fill();
         // Head
-        X.fillStyle = '#ffee66';
-        X.beginPath(); X.arc(cx + (ci === 0 ? -2 : 2), cy - 4 + bob, 3.5, 0, Math.PI * 2); X.fill();
+        X.fillStyle = grown ? '#ddcc44' : '#ffee66';
+        X.beginPath(); X.arc(cx + (ci === 0 ? -2 : 2) * sz, cy - 4 * sz + bob, 3.5 * sz, 0, Math.PI * 2); X.fill();
+        // Grown chick wing feathers
+        if (grown) {
+            X.fillStyle = '#ccaa22';
+            X.save(); X.translate(cx, cy + bob);
+            X.rotate(Math.sin(ch.t * 2 + ci) * 0.15);
+            X.beginPath(); X.ellipse(ci === 0 ? -5 : 5, -1, 6, 3, ci === 0 ? -0.3 : 0.3, 0, Math.PI * 2); X.fill();
+            X.restore();
+        }
 
         if (sleeping) {
             // Sleeping — closed eyes, zzz
             X.strokeStyle = '#333';
             X.lineWidth = 1;
-            const ex = cx + (ci === 0 ? -3 : 3);
-            X.beginPath(); X.moveTo(ex - 1.5, cy - 4.5); X.lineTo(ex + 1.5, cy - 4.5); X.stroke();
-            X.font = '8px Arial'; X.fillStyle = '#aaddff'; X.globalAlpha = 0.6 + Math.sin(ch.t * 2) * 0.3;
-            X.fillText('z', cx + (ci === 0 ? -10 : 10), cy - 10 + Math.sin(ch.t) * 3);
+            const ex = cx + (ci === 0 ? -3 : 3) * sz;
+            X.beginPath(); X.moveTo(ex - 1.5 * sz, cy - 4.5 * sz); X.lineTo(ex + 1.5 * sz, cy - 4.5 * sz); X.stroke();
+            X.font = `${8 * sz}px Arial`; X.fillStyle = '#aaddff'; X.globalAlpha = 0.6 + Math.sin(ch.t * 2) * 0.3;
+            X.fillText('z', cx + (ci === 0 ? -10 : 10) * sz, cy - 10 * sz + Math.sin(ch.t) * 3);
             X.globalAlpha = 1;
         } else {
             // Awake — eyes
             X.fillStyle = '#111';
-            const ex = cx + (ci === 0 ? -3.5 : 3.5);
-            X.beginPath(); X.arc(ex, cy - 4.5 + bob, 1, 0, Math.PI * 2); X.fill();
-            // Tiny beak
+            const ex = cx + (ci === 0 ? -3.5 : 3.5) * sz;
+            X.beginPath(); X.arc(ex, cy - 4.5 * sz + bob, 1 * sz, 0, Math.PI * 2); X.fill();
+            // Beak (bigger for grown)
             X.fillStyle = '#ff8800';
             const bdir = ci === 0 ? -1 : 1;
-            X.beginPath(); X.moveTo(cx + bdir * 4, cy - 4 + bob);
-            X.lineTo(cx + bdir * 7, cy - 3.5 + bob + (ch.hungry > 3 ? Math.sin(ch.t * 10) * 1.5 : 0));
-            X.lineTo(cx + bdir * 4, cy - 2.5 + bob); X.closePath(); X.fill();
+            X.beginPath(); X.moveTo(cx + bdir * 4 * sz, cy - 4 * sz + bob);
+            X.lineTo(cx + bdir * 7 * sz, cy - 3.5 * sz + bob + (ch.hungry > 3 ? Math.sin(ch.t * 10) * 1.5 * sz : 0));
+            X.lineTo(cx + bdir * 4 * sz, cy - 2.5 * sz + bob); X.closePath(); X.fill();
             // Hungry indicator — open beak, chirping
             if (ch.hungry > 3 && !sleeping) {
-                X.font = '9px Arial'; X.fillStyle = '#ff6600';
+                X.font = `${9 * sz}px Arial`; X.fillStyle = '#ff6600';
                 X.textAlign = 'center';
-                X.fillText('!', cx, cy - 14 + bob);
+                X.fillText('!', cx, cy - 14 * sz + bob);
             }
         }
 
         // HP indicator (tiny hearts)
         for (let h = 0; h < ch.hp; h++) {
             X.fillStyle = '#ff4466';
-            X.font = '6px Arial';
-            X.fillText('♥', cx - 4 + h * 5, cy + 9);
+            X.font = `${6 * sz}px Arial`;
+            X.fillText('♥', cx - 4 * sz + h * 5 * sz, cy + 9 * sz);
         }
     });
 
@@ -494,13 +507,23 @@ function drawPlayerBird() {
     X.fillText('▼ YOU', p.x, p.y - s - 10);
     X.restore();
 
-    // Carrying gnat indicator
+    // Carrying gnat/worm indicator
     if (nest.carryingGnat) {
         X.save();
-        X.fillStyle = '#3a3a20';
-        X.beginPath(); X.arc(p.x + (p.vx > 0 ? s * 0.9 : -s * 0.9), p.y - 2, 3, 0, Math.PI * 2); X.fill();
-        X.fillStyle = 'rgba(200,220,255,0.5)';
-        X.beginPath(); X.ellipse(p.x + (p.vx > 0 ? s * 0.7 : -s * 0.7), p.y - 6, 5, 2, 0, 0, Math.PI * 2); X.fill();
+        if (nest.carryingWorm) {
+            // Worm in beak
+            X.fillStyle = '#cc7766';
+            const wx = p.x + (p.vx > 0 ? s * 0.9 : -s * 0.9);
+            for (let i = 0; i < 3; i++) {
+                X.beginPath(); X.arc(wx + i * 3, p.y - 2 + Math.sin(elapsed * 8 + i) * 1, 2.5, 0, Math.PI * 2); X.fill();
+            }
+        } else {
+            // Gnat in beak
+            X.fillStyle = '#3a3a20';
+            X.beginPath(); X.arc(p.x + (p.vx > 0 ? s * 0.9 : -s * 0.9), p.y - 2, 3, 0, Math.PI * 2); X.fill();
+            X.fillStyle = 'rgba(200,220,255,0.5)';
+            X.beginPath(); X.ellipse(p.x + (p.vx > 0 ? s * 0.7 : -s * 0.7), p.y - 6, 5, 2, 0, 0, Math.PI * 2); X.fill();
+        }
         // Arrow pointing to nest
         X.strokeStyle = '#ffee44'; X.lineWidth = 1.5; X.globalAlpha = 0.5 + Math.sin(elapsed * 5) * 0.3;
         const nx = nest.x - p.x, ny = nest.y - p.y, nd = Math.hypot(nx, ny) || 1;
@@ -691,9 +714,10 @@ function startGame() {
     birdConsec = 0; activePU = null; bossBird = null; bossTimer = 0; superPower = 0; treeGrowth = 0; nightAlpha = 0;
     player.x = W / 2; player.y = H * 0.4; player.vx = 0; player.vy = 0; player.trail = []; player.power = 0; player.beakOpen = 0; player.shakeT = 0; player.gnatsEaten = 0; player.size = 28; player.shield = 0;
     bubbles = []; enemyBirds = []; gnats = []; floatTexts = []; fragments = [];
-    fires = []; waterDrops = []; mice = []; steamParts = []; gnatBubs = [];
-    tmrBub = 0; tmrBird = 0; tmrGnat = 0;
-    nest.eggs = 3; nest.chicks = []; nest.shield = 0; nest.carryingGnat = false;
+    fires = []; waterDrops = []; mice = []; steamParts = []; gnatBubs = []; worms = [];
+    tmrBub = 0; tmrBird = 0; tmrGnat = 0; tmrWorm = 0;
+    dino = null;
+    nest.eggs = 3; nest.chicks = []; nest.shield = 0; nest.carryingGnat = false; nest.carryingWorm = false;
     initParallax();
     addFloatText('🫧 Level 1: Pop the Bubbles!', W / 2, H / 2, '#fff', 2, 'big');
     // Start jingle
@@ -702,8 +726,8 @@ function startGame() {
 
 function nextLevel() {
     level++; lvlScore = 0;
-    if (level > 8) { doWin(); return; }
-    const titles = { 2: '🪰 Lv.2: Gnats + Traps', 3: '🌙 Lv.3: Night Cycle', 4: '🐣 Lv.4: A Chick Hatches!', 5: '🐣🐣 Lv.5: Second Chick!', 6: '🦅 Lv.6: BOSS', 7: '⛈️ Lv.7: Storm', 8: '🔥 FINALE: Fire!' };
+    if (level > 9) { doWin(); return; }
+    const titles = { 2: '🪰 Lv.2: Gnats + Traps', 3: '🌙 Lv.3: Night Cycle', 4: '🐣 Lv.4: A Chick Hatches!', 5: '🐣🐣 Lv.5: Second Chick!', 6: '🦅 Lv.6: BOSS', 7: '⛈️ Lv.7: Storm', 8: '🔥 Lv.8: Fire!', 9: '🦖 FINALE: Dinosaur Attack!' };
     state = 'transition'; transitionTimer = 99; transitionText = titles[level] || ''; // waits for click
     // Level up fanfare
     snd(523, 784, .15, 'sine', .08); setTimeout(() => snd(659, 988, .15, 'sine', .08), 100); setTimeout(() => snd(784, 1175, .2, 'sine', .1), 200);
@@ -721,6 +745,17 @@ function nextLevel() {
         enemyBirds = []; gnats = []; bubbles = [];
         if (bossBird) { bossBird = null; }
         spawnAllFires();
+    }
+    // Level 9: dino attack — chicks grow, worms appear, no mouse clicking
+    if (level === 9) {
+        fires = []; waterDrops = []; mice = []; gnatBubs = [];
+        // Chicks grow up (bigger, hungrier)
+        nest.chicks.forEach(ch => { ch.grown = true; ch.hungry = 0; ch.hp = Math.max(ch.hp, 3); });
+        // Third egg hatches too
+        if (nest.eggs > 0 && nest.chicks.length < 3) {
+            nest.eggs--; nest.chicks.push({ hungry: 0, fed: 0, hp: 3, t: 0, grown: true });
+        }
+        dino = null; // will spawn after a delay
     }
 }
 
@@ -1115,22 +1150,27 @@ function updateNest(dt) {
     if (player.shield < 0) player.shield = 0;
 
     // Chicks get hungry over time (not at night — they sleep)
+    // Grown chicks (level 9+) get hungry faster
     nest.chicks.forEach(ch => {
-        if (!isNight) ch.hungry += dt * 0.6;
+        if (!isNight) ch.hungry += dt * (ch.grown ? 1.2 : 0.6);
     });
 
-    // Player carrying gnat → deliver to nest
+    // Player carrying gnat/worm → deliver to nest
     if (nest.carryingGnat && dist(player.x, player.y, nest.x, nest.y) < nest.feedRadius) {
-        nest.carryingGnat = false;
+        const isWorm = nest.carryingWorm;
+        nest.carryingGnat = false; nest.carryingWorm = false;
         // Feed the hungriest chick
         let hungriest = null;
         nest.chicks.forEach(ch => { if (!hungriest || ch.hungry > hungriest.hungry) hungriest = ch; });
         if (hungriest) {
             hungriest.hungry = 0;
             hungriest.fed++;
-            score += 8; lvlScore += 8;
-            addFloatText('+8 🐣 Fed!', nest.x, nest.y - 30, '#ffee44', 1.2, 'big');
+            const pts = isWorm ? 15 : 8;
+            score += pts; lvlScore += pts;
+            addFloatText(`+${pts} ${isWorm ? '🪱' : '🐣'} Fed!`, nest.x, nest.y - 30, '#ffee44', 1.2, 'big');
             snd(900, 1400, .12, 'sine', .06);
+            // Worm also heals chick +1 HP
+            if (isWorm && hungriest.hp < 3) { hungriest.hp++; addFloatText('+♥', nest.x, nest.y - 50, '#ff4466', 0.8); }
         }
     }
 
@@ -1322,6 +1362,421 @@ function spawnGnatBub2D() {
 }
 
 // ============================================================
+//  LEVEL 9: DINO ATTACK — worms, grown chicks, dinosaur
+// ============================================================
+function spawnWorm() {
+    const seaY = H * 0.75;
+    worms.push({
+        x: R(40, W - 140), // avoid nest tree on right
+        y: seaY - R(2, 8),
+        vx: R(-0.3, 0.3),
+        t: R(0, 100),
+        life: 15,
+        emerging: 1, // 0=underground, 1=popping out
+    });
+}
+
+function drawWorm(w) {
+    X.save();
+    X.translate(w.x, w.y);
+    const wiggle = Math.sin(w.t * 4) * 3;
+    const emerge = Math.min(w.emerging, 1);
+    // Body segments (pink/brown segmented worm)
+    X.fillStyle = '#cc7766';
+    for (let i = 0; i < 5; i++) {
+        const sx = i * 5 - 10 + Math.sin(w.t * 3 + i) * 2;
+        const sy = -emerge * (12 + i * 2) + wiggle * (i * 0.3);
+        X.beginPath(); X.ellipse(sx, sy, 4, 3, 0, 0, Math.PI * 2); X.fill();
+    }
+    // Head
+    X.fillStyle = '#dd8877';
+    const hx = 15 + Math.sin(w.t * 3 + 5) * 2;
+    const hy = -emerge * 22 + wiggle;
+    X.beginPath(); X.arc(hx, hy, 4, 0, Math.PI * 2); X.fill();
+    // Eyes
+    X.fillStyle = '#111';
+    X.beginPath(); X.arc(hx + 2, hy - 1.5, 1, 0, Math.PI * 2); X.fill();
+    // Segment lines
+    X.strokeStyle = '#aa5544';
+    X.lineWidth = 0.5;
+    for (let i = 0; i < 4; i++) {
+        const sx = i * 5 - 8;
+        const sy = -emerge * (14 + i * 2);
+        X.beginPath(); X.moveTo(sx - 3, sy); X.lineTo(sx + 3, sy); X.stroke();
+    }
+    // Dirt hole
+    X.fillStyle = '#5a4030';
+    X.beginPath(); X.ellipse(0, 2, 8, 3, 0, 0, Math.PI * 2); X.fill();
+    X.restore();
+}
+
+function spawnDino() {
+    const side = Math.random() > 0.5 ? 1 : -1;
+    dino = {
+        x: side > 0 ? -80 : W + 80,
+        y: H * 0.75 - 30,
+        vx: -side * 1.5,
+        hp: 8,
+        t: 0,
+        shaking: false,
+        shakeT: 0,
+        state: 'walk', // walk | shake | stunned | flee
+        stateT: 0,
+        hits: 0, // times player pecked it
+    };
+}
+
+function drawDino() {
+    if (!dino) return;
+    const d = dino, s = 40;
+    X.save();
+    X.translate(d.x, d.y);
+    X.scale(d.vx > 0 ? 1 : -1, 1);
+
+    // Shake offset
+    const shOff = d.shaking ? Math.sin(d.t * 40) * 3 : 0;
+
+    // Body (dark green, big)
+    X.fillStyle = '#3a6a2a';
+    X.beginPath(); X.ellipse(0 + shOff, 0, s * 1.2, s * 0.6, 0, 0, Math.PI * 2); X.fill();
+    X.strokeStyle = '#2a4a1a'; X.lineWidth = 2; X.stroke();
+
+    // Belly
+    X.fillStyle = '#6a9a4a';
+    X.beginPath(); X.ellipse(0 + shOff, s * 0.15, s * 0.8, s * 0.35, 0, 0, Math.PI * 2); X.fill();
+
+    // Tail
+    X.fillStyle = '#3a6a2a';
+    X.beginPath();
+    X.moveTo(-s * 1.1 + shOff, 0);
+    X.quadraticCurveTo(-s * 1.8 + shOff, -s * 0.3, -s * 2.2 + shOff, s * 0.1);
+    X.lineTo(-s * 1.1 + shOff, s * 0.2);
+    X.closePath(); X.fill();
+    // Tail spikes
+    X.fillStyle = '#2a5a1a';
+    for (let i = 0; i < 4; i++) {
+        const tx = -s * (1.2 + i * 0.25) + shOff, ty = -s * 0.15 - i * 3;
+        X.beginPath(); X.moveTo(tx - 4, ty + 4); X.lineTo(tx, ty - 6); X.lineTo(tx + 4, ty + 4); X.closePath(); X.fill();
+    }
+
+    // Head
+    X.fillStyle = '#3a6a2a';
+    X.beginPath(); X.arc(s * 0.9 + shOff, -s * 0.2, s * 0.45, 0, Math.PI * 2); X.fill();
+    // Jaw
+    X.fillStyle = '#4a7a3a';
+    X.beginPath(); X.ellipse(s * 1.1 + shOff, s * 0.05, s * 0.35, s * 0.2, -0.1, 0, Math.PI * 2); X.fill();
+
+    // Eye (angry)
+    X.fillStyle = '#ff0';
+    X.beginPath(); X.arc(s * 1.0 + shOff, -s * 0.35, 6, 0, Math.PI * 2); X.fill();
+    X.fillStyle = '#800';
+    X.beginPath(); X.arc(s * 1.02 + shOff, -s * 0.35, 3, 0, Math.PI * 2); X.fill();
+    // Angry brow
+    X.strokeStyle = '#2a4a1a'; X.lineWidth = 2;
+    X.beginPath(); X.moveTo(s * 0.85 + shOff, -s * 0.48); X.lineTo(s * 1.15 + shOff, -s * 0.42); X.stroke();
+
+    // Teeth
+    X.fillStyle = '#fff';
+    for (let i = 0; i < 4; i++) {
+        const tx = s * 0.85 + i * 8 + shOff, ty = s * 0.05;
+        X.beginPath(); X.moveTo(tx, ty); X.lineTo(tx + 2, ty + 5); X.lineTo(tx + 4, ty); X.closePath(); X.fill();
+    }
+
+    // Legs (thick, short)
+    X.fillStyle = '#2a5a1a';
+    X.fillRect(-s * 0.4 + shOff, s * 0.35, 12, 20);
+    X.fillRect(s * 0.3 + shOff, s * 0.35, 12, 20);
+    // Claws
+    X.fillStyle = '#444';
+    for (let l = 0; l < 2; l++) {
+        const lx = l === 0 ? -s * 0.4 : s * 0.3;
+        for (let c = 0; c < 3; c++) {
+            X.beginPath(); X.moveTo(lx + c * 4 + shOff, s * 0.55); X.lineTo(lx + c * 4 + 2 + shOff, s * 0.62); X.lineTo(lx + c * 4 + 4 + shOff, s * 0.55); X.closePath(); X.fill();
+        }
+    }
+
+    // Back spikes
+    X.fillStyle = '#2a5a1a';
+    for (let i = 0; i < 5; i++) {
+        const sx = -s * 0.6 + i * s * 0.35 + shOff, sy = -s * 0.55;
+        X.beginPath(); X.moveTo(sx - 5, sy + 8); X.lineTo(sx, sy - 4 - i * 1); X.lineTo(sx + 5, sy + 8); X.closePath(); X.fill();
+    }
+
+    // Stunned stars
+    if (d.state === 'stunned') {
+        X.font = '14px Arial'; X.fillStyle = '#ffee00';
+        for (let i = 0; i < 3; i++) {
+            const angle = d.t * 3 + i * 2.1;
+            X.fillText('⭐', s * 0.9 + Math.cos(angle) * 20, -s * 0.6 + Math.sin(angle) * 10);
+        }
+    }
+
+    // HP bar
+    X.fillStyle = 'rgba(0,0,0,0.5)'; X.fillRect(-30, -s - 10, 60, 6);
+    X.fillStyle = d.hp > 4 ? '#66cc44' : d.hp > 2 ? '#ffaa00' : '#ff4444';
+    X.fillRect(-30, -s - 10, 60 * (d.hp / 8), 6);
+
+    X.restore();
+}
+
+function updateLvl9(dt) {
+    elapsed += dt;
+
+    // Spawn worms
+    tmrWorm += dt;
+    if (tmrWorm > 2.5 && worms.length < 6) { tmrWorm = 0; spawnWorm(); }
+
+    // Spawn gnats (more of them, chicks are hungry)
+    tmrGnat += dt;
+    if (tmrGnat > 1.5 && gnats.length < 15) { tmrGnat = 0; spawnGnat(); }
+
+    // Spawn enemy birds (fewer in level 9, dino is the main threat)
+    tmrBird += dt;
+    if (tmrBird > 5 && enemyBirds.length < 3) { tmrBird = 0; spawnEnemyBird(); }
+
+    // Spawn dino after 10s
+    if (!dino && elapsed > 10) spawnDino();
+
+    // Combo timer
+    if (combo > 0) { comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
+
+    // Night cycle
+    if (has('night')) {
+        const cycleDur = 70;
+        dayPhase = (elapsed % cycleDur) / cycleDur;
+        const was = isNight;
+        isNight = dayPhase > 0.55 && dayPhase < 0.88;
+        if (isNight && !was) addFloatText('🌙 NIGHTFALL...', W / 2, H / 2, '#aaddff', 2, 'big');
+        if (!isNight && was) addFloatText('☀️ Dawn!', W / 2, H / 2, '#ffdd44', 2, 'big');
+        const ramp = 0.05;
+        if (dayPhase < 0.55) nightAlpha = Math.max(nightAlpha - dt * 1.2, 0);
+        else if (dayPhase < 0.55 + ramp) nightAlpha = Math.min((dayPhase - 0.55) / ramp, 1);
+        else if (dayPhase < 0.88 - ramp) nightAlpha = 1;
+        else if (dayPhase < 0.88) nightAlpha = Math.max(1 - (dayPhase - (0.88 - ramp)) / ramp, 0);
+        else nightAlpha = Math.max(nightAlpha - dt * 1.2, 0);
+    }
+
+    treeGrowth = 1; // max growth in level 9
+
+    // Player movement (arrows only — NO mouse popping)
+    const spd = player.speed * dt;
+    if (keys['ArrowLeft'] || keys['KeyA']) player.vx -= spd * 0.15;
+    if (keys['ArrowRight'] || keys['KeyD']) player.vx += spd * 0.15;
+    if (keys['ArrowUp'] || keys['KeyW']) player.vy -= spd * 0.15;
+    if (keys['ArrowDown'] || keys['KeyS']) player.vy += spd * 0.15;
+    player.vx *= 0.92; player.vy *= 0.92;
+    player.x += player.vx; player.y += player.vy;
+    player.x = Math.max(30, Math.min(W - 30, player.x));
+    player.y = Math.max(30, Math.min(H * 0.78, player.y)); // can go to ground level
+
+    // Trail
+    if (Math.abs(player.vx) > 0.5 || Math.abs(player.vy) > 0.5)
+        player.trail.push({ x: player.x, y: player.y, life: 0.4 });
+    for (let i = player.trail.length - 1; i >= 0; i--) { player.trail[i].life -= dt; if (player.trail[i].life <= 0) player.trail.splice(i, 1); }
+
+    // Beak position
+    const beakDir = player.vx >= 0 ? 1 : -1;
+    const beakX = player.x + beakDir * player.size * 0.8;
+    const beakY = player.y;
+
+    // Beak open near food
+    let wantBeakOpen = false;
+    for (const g of gnats) { if (dist(player.x, player.y, g.x, g.y) < 55) { wantBeakOpen = true; break; } }
+    if (!wantBeakOpen) { for (const w of worms) { if (dist(player.x, player.y, w.x, w.y) < 50) { wantBeakOpen = true; break; } } }
+    if (wantBeakOpen) player.beakOpen = Math.min(player.beakOpen + dt * 8, 1);
+    else player.beakOpen = Math.max(player.beakOpen - dt * 5, 0);
+
+    // Player eats gnats — carry to chicks
+    const hungryChick = nest.chicks.find(ch => ch.hungry > 2);
+    for (let i = gnats.length - 1; i >= 0; i--) {
+        if (dist(player.x, player.y, gnats[i].x, gnats[i].y) < 30) {
+            player.beakOpen = 1;
+            snd(1200, 600, .08, 'sine', .06);
+            gnats.splice(i, 1);
+            if (hungryChick && !nest.carryingGnat) {
+                nest.carryingGnat = true;
+                addFloatText('🪰 Carry to nest!', player.x, player.y - 30, '#ffee44', 1);
+            } else {
+                player.gnatsEaten++;
+                score += 2; lvlScore += 2;
+                addFloatText('+2', player.x, player.y - 20, '#ffee00', 0.6);
+            }
+        }
+    }
+
+    // Player eats worms — carry to chicks (worms are worth more)
+    for (let i = worms.length - 1; i >= 0; i--) {
+        if (dist(beakX, beakY, worms[i].x, worms[i].y) < 25) {
+            player.beakOpen = 1;
+            snd(900, 500, .1, 'sine', .08);
+            worms.splice(i, 1);
+            if (hungryChick && !nest.carryingGnat) {
+                nest.carryingGnat = true;
+                nest.carryingWorm = true; // worms feed more
+                addFloatText('🪱 Worm! Carry to nest!', player.x, player.y - 30, '#cc7766', 1.2);
+            } else {
+                player.gnatsEaten += 2;
+                score += 5; lvlScore += 5;
+                addFloatText('+5 🪱', player.x, player.y - 20, '#cc7766', 0.8);
+            }
+        }
+    }
+
+    // Update worms
+    for (let i = worms.length - 1; i >= 0; i--) {
+        const w = worms[i]; w.t += dt; w.life -= dt;
+        w.emerging = Math.min(w.emerging + dt * 0.8, 1);
+        w.x += w.vx * dt * 60;
+        w.vx += (Math.random() - 0.5) * 0.5 * dt;
+        if (w.x < 20 || w.x > W - 150) w.vx *= -1;
+        if (w.life <= 0) worms.splice(i, 1); // worm goes back underground
+    }
+
+    // Update gnats
+    for (let i = gnats.length - 1; i >= 0; i--) {
+        const g = gnats[i]; g.t += dt; g.life -= dt;
+        g.vx += (Math.random() - 0.5) * 8 * dt; g.vy += (Math.random() - 0.5) * 6 * dt;
+        const len = Math.hypot(g.vx, g.vy); if (len > 2) { g.vx *= 2 / len; g.vy *= 2 / len; }
+        g.x += g.vx * dt * 60; g.y += g.vy * dt * 60;
+        if (g.x < 10 || g.x > W - 10) g.vx *= -1;
+        if (g.y < 30 || g.y > H * 0.7) g.vy *= -1;
+        if (g.life <= 0) gnats.splice(i, 1);
+    }
+
+    // Update enemy birds (simplified — just wander and eat gnats)
+    for (let i = enemyBirds.length - 1; i >= 0; i--) {
+        const b = enemyBirds[i]; b.t += dt; b.stateT += dt;
+        b.wingT += b.flapSpd * dt;
+        b.sleeping = isNight;
+        if (isNight) { b.y += Math.sin(b.t * 0.5) * 0.3; continue; }
+        // Eat gnats
+        for (let gi = gnats.length - 1; gi >= 0; gi--) {
+            if (dist(b.x, b.y, gnats[gi].x, gnats[gi].y) < b.size) {
+                gnats.splice(gi, 1);
+            }
+        }
+        b.vx += (Math.random() - 0.5) * 2 * dt * 60; b.vy += (Math.random() - 0.5) * dt * 60;
+        b.vx = clamp(b.vx, -3, 3); b.vy = clamp(b.vy, -1.5, 1.5);
+        b.x += b.vx * dt * 60; b.y += b.vy * dt * 60;
+        if (b.y < 40) b.vy += 2 * dt * 60; if (b.y > H * 0.65) b.vy -= 2 * dt * 60;
+        // Scare away from player
+        if (dist(b.x, b.y, player.x, player.y) < 60) {
+            b.vx = (b.x - player.x) > 0 ? R(3, 5) : R(-5, -3);
+            b.vy = R(-2, -1);
+        }
+        if (b.x < -80 || b.x > W + 80) enemyBirds.splice(i, 1);
+    }
+
+    // Screen shake decay
+    if (player.shakeT > 0) player.shakeT -= dt;
+
+    // ---- DINOSAUR AI ----
+    if (dino) {
+        dino.t += dt;
+        dino.stateT += dt;
+        const nestTreeX = W - 90;
+
+        switch (dino.state) {
+            case 'walk':
+                // Walk toward the nest tree
+                dino.x += dino.vx * dt * 60;
+                if (Math.abs(dino.x - nestTreeX) < 50) {
+                    dino.state = 'shake'; dino.stateT = 0;
+                    dino.shaking = true; dino.shakeT = 0;
+                    snd(100, 50, .5, 'sawtooth', .12);
+                    addFloatText('🦖 SHAKE!', dino.x, dino.y - 60, '#ff4444', 1.5, 'big');
+                }
+                break;
+            case 'shake':
+                // Shake the tree! Chicks might fall
+                dino.shakeT += dt;
+                // Tree shakes visually (handled in draw)
+                if (dino.shakeT > 0.5 && dino.shakeT < 0.6) {
+                    // Damage chicks if no shield
+                    if (nest.shield <= 0) {
+                        nest.chicks.forEach(ch => {
+                            ch.hp--;
+                            if (ch.hp <= 0) {
+                                addFloatText('💀 Chick fell!', nest.x, nest.y - 30, '#ff0000', 2, 'big');
+                                snd(200, 60, .4, 'sawtooth', .1);
+                                lives--;
+                                if (lives <= 0) doGameOver();
+                            }
+                        });
+                        player.shakeT = 0.5;
+                        addFloatText('⚠️ Peck the dino!', W / 2, H / 2, '#ffaa00', 2, 'big');
+                    } else {
+                        nest.shield -= 80;
+                        addFloatText('🛡 Shield!', nest.x, nest.y - 30, '#44ff88', 1);
+                    }
+                }
+                if (dino.shakeT > 2) {
+                    dino.shaking = false;
+                    dino.state = 'walk';
+                    dino.stateT = 0;
+                    // Walk away then come back
+                    dino.vx = dino.x > W / 2 ? -2 : 2;
+                }
+                break;
+            case 'stunned':
+                // Stunned — can't move
+                if (dino.stateT > 2) {
+                    dino.state = 'walk'; dino.stateT = 0;
+                    dino.vx = dino.x > W / 2 ? 1.5 : -1.5;
+                    // Walk toward tree again
+                    const toTree = nestTreeX - dino.x;
+                    dino.vx = toTree > 0 ? R(1, 2) : R(-2, -1);
+                }
+                break;
+            case 'flee':
+                dino.x += dino.vx * dt * 60 * 2;
+                if (dino.x < -100 || dino.x > W + 100) {
+                    dino = null;
+                    score += 30; lvlScore += 30;
+                    addFloatText('+30 🦖 Dino defeated!', W / 2, H / 2, '#44ff88', 2, 'big');
+                    snd(600, 1200, .2, 'sine', .08);
+                }
+                break;
+        }
+
+        // Player pecks dinosaur (beak contact)
+        if (dino && dino.state !== 'stunned' && dino.state !== 'flee') {
+            if (dist(beakX, beakY, dino.x, dino.y) < 50) {
+                player.beakOpen = 1;
+                dino.hp--;
+                dino.hits++;
+                dino.state = 'stunned'; dino.stateT = 0;
+                dino.shaking = false;
+                score += 5; lvlScore += 5;
+                addFloatText('+5 💥', dino.x, dino.y - 50, '#ff8844', 1);
+                snd(350, 150, .15, 'sawtooth', .08);
+                // Knockback player
+                player.vx += (player.x - dino.x) > 0 ? 5 : -5;
+                player.vy -= 3;
+                if (dino.hp <= 0) {
+                    dino.state = 'flee'; dino.stateT = 0;
+                    dino.vx = dino.x > W / 2 ? 4 : -4;
+                    addFloatText('🦖 Fleeing!', dino.x, dino.y - 40, '#44ffaa', 1.5, 'big');
+                    snd(400, 800, .2, 'sine', .08);
+                }
+            }
+        }
+
+        // Remove dead chicks
+        nest.chicks = nest.chicks.filter(ch => ch.hp > 0);
+    }
+
+    // Nest update (feeding, hunger, shield)
+    updateNest(dt);
+
+    // Consume mouse click (no bubble popping in level 9)
+    if (mouseClicked) mouseClicked = false;
+
+    // Win: survived + dino defeated (dino goes null after flee)
+    if (!dino && elapsed > 12 && lvlScore >= 50) nextLevel();
+}
+
+// ============================================================
 //  HUD & OVERLAYS
 // ============================================================
 function drawHUD() {
@@ -1347,16 +1802,18 @@ function drawHUD() {
 
     // Level + progress
     X.fillStyle = 'rgba(0,0,0,0.4)';
-    const lvlText = level < 8 ? `Level ${level}` : 'FINALE';
+    const lvlText = level === 9 ? 'FINALE' : `Level ${level}`;
     const tw = X.measureText(lvlText).width;
     roundRect(W - tw - 40, 10, tw + 30, 42, 10); X.fill();
-    X.fillStyle = level === 8 ? '#fca' : '#adf'; X.font = 'bold 18px Arial'; X.textAlign = 'right';
+    X.fillStyle = level >= 8 ? '#fca' : '#adf'; X.font = 'bold 18px Arial'; X.textAlign = 'right';
     X.fillText(lvlText, W - 20, 37);
 
     // Progress bar
     X.fillStyle = 'rgba(0,0,0,0.3)'; X.fillRect(12, 58, 180, 7);
-    const pct = level < 8 ? Math.min(lvlScore / 100, 1) : (1 - fires.filter(f => !f.dead).length / Math.max(fires.length, 1));
-    X.fillStyle = level === 8 ? '#f84' : '#7df'; X.fillRect(12, 58, 180 * pct, 7);
+    const pct = level === 9 ? (dino ? Math.min(1 - dino.hp / 8, 0.95) : Math.min(lvlScore / 50, 1))
+        : level === 8 ? (1 - fires.filter(f => !f.dead).length / Math.max(fires.length, 1))
+        : Math.min(lvlScore / 100, 1);
+    X.fillStyle = level >= 8 ? '#f84' : '#7df'; X.fillRect(12, 58, 180 * pct, 7);
 
     // Powerup
     if (activePU) {
@@ -1423,7 +1880,7 @@ function drawMenu() {
     X.fillText('🖱️ Click — pop bubbles', W / 2, H / 2 - 50);
     X.fillText('Bird pops with its beak too!', W / 2, H / 2 - 25);
     X.font = '13px Arial'; X.fillStyle = '#999';
-    X.fillText('8 Levels | Combo | Powerup | Boss | Storm', W / 2, H / 2 + 5);
+    X.fillText('9 Levels | Combo | Powerup | Boss | Dino', W / 2, H / 2 + 5);
 
     // Leaderboard
     const lb = getLB();
@@ -1466,6 +1923,7 @@ function drawTransition(dt) {
         6: 'BOSS incoming! Click it 3x or ram it to defeat.',
         7: 'Storm winds push bubbles. Stay focused!',
         8: 'Pop bubbles to pour water on the fires! Put them all out!',
+        9: 'Chicks are grown! Catch worms & gnats to feed them. Peck the dinosaur to protect the nest! Arrows only — no mouse!',
     };
     if (tips[level]) {
         X.fillStyle = '#ccc'; X.font = '18px Arial';
@@ -1588,8 +2046,8 @@ function gameLoop(ts) {
     if (state === 'gameover') { drawEndScreen('💀 Game Over'); return; }
 
     if (state === 'transition') {
-        if (level !== 8) drawBackground(dt);
-        else { const g = X.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#1a0a00'); g.addColorStop(1, '#442200'); X.fillStyle = g; X.fillRect(0, 0, W, H); }
+        if (level === 8) { const g = X.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#1a0a00'); g.addColorStop(1, '#442200'); X.fillStyle = g; X.fillRect(0, 0, W, H); }
+        else drawBackground(dt);
         drawTransition(dt); return;
     }
 
@@ -1604,15 +2062,23 @@ function gameLoop(ts) {
     if (level < 8) {
         drawBackground(dt);
         updateBubbleLevels(dt);
-        // Draw gnats (detailed insect)
         gnats.forEach(g => drawGnat(g));
         bubbles.forEach(b => drawBubble(b));
         enemyBirds.forEach(b => drawEnemyBird(b));
         drawBoss2D();
         drawPlayerBird();
-    } else {
+    } else if (level === 8) {
         updateLvl8(dt);
         drawLvl8();
+    } else if (level === 9) {
+        updateLvl9(dt);
+        // Draw level 9 scene
+        drawBackground(dt);
+        worms.forEach(w => drawWorm(w));
+        gnats.forEach(g => drawGnat(g));
+        enemyBirds.forEach(b => drawEnemyBird(b));
+        drawDino();
+        drawPlayerBird();
     }
 
     // Rain (storm level)
