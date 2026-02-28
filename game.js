@@ -37,6 +37,9 @@ let fires = [], waterDrops = [], mice = [], steamParts = [], gnatBubs = [], rain
 let bossBird = null, bossTimer = 0;
 let superPower = 0;
 let dino = null; // { x, y, vx, hp, t, shaking, shakeT, state }
+let fireRound = 1; // level 8: round 1 = ground fires, round 2 = fireballs from sky
+let fireballs = []; // { x, y, vx, vy, r, t }
+let wingsBurned = 0; // 0=fine, >0 = singed (limits altitude)
 
 // ---- Parallax layers ----
 let clouds = [], mountains = [], treesLayer = [];
@@ -714,9 +717,9 @@ function startGame() {
     birdConsec = 0; activePU = null; bossBird = null; bossTimer = 0; superPower = 0; treeGrowth = 0; nightAlpha = 0;
     player.x = W / 2; player.y = H * 0.4; player.vx = 0; player.vy = 0; player.trail = []; player.power = 0; player.beakOpen = 0; player.shakeT = 0; player.gnatsEaten = 0; player.size = 28; player.shield = 0;
     bubbles = []; enemyBirds = []; gnats = []; floatTexts = []; fragments = [];
-    fires = []; waterDrops = []; mice = []; steamParts = []; gnatBubs = []; worms = [];
+    fires = []; waterDrops = []; mice = []; steamParts = []; gnatBubs = []; worms = []; fireballs = [];
     tmrBub = 0; tmrBird = 0; tmrGnat = 0; tmrWorm = 0;
-    dino = null;
+    dino = null; fireRound = 1; wingsBurned = 0;
     nest.eggs = 3; nest.chicks = []; nest.shield = 0; nest.carryingGnat = false; nest.carryingWorm = false;
     initParallax();
     addFloatText('🫧 Level 1: Pop the Bubbles!', W / 2, H / 2, '#fff', 2, 'big');
@@ -1346,12 +1349,116 @@ function updateLvl8(dt) {
     // Mice (bonus)
     tmrMouse += dt; if (tmrMouse > 3 && mice.length < 3) { tmrMouse = 0; spawnMouse2D(); }
 
-    if (fires.length > 0 && fires.every(f => f.dead)) doWin();
+    // Round check
+    if (fireRound === 1 && fires.length > 0 && fires.every(f => f.dead)) {
+        // Round 1 complete → start Round 2!
+        fireRound = 2;
+        fires = []; fireballs = []; wingsBurned = 0;
+        addFloatText('🔥 ROUND 2: Firestorm!', W / 2, H / 2, '#ff4444', 3, 'big');
+        addFloatText('Dodge fireballs! Pop bubbles to extinguish!', W / 2, H / 2 + 45, '#ffcc44', 3);
+        snd(200, 100, .3, 'sawtooth', .1);
+        // Spawn new ground fires that fireballs can feed
+        for (let i = 0; i < 4; i++) {
+            fires.push({ x: R(60, W - 60), y: H * 0.65 + R(-20, 20), hp: 60, dead: false, t: R(0, 10) });
+        }
+    }
+
+    // Round 2: fireballs rain from sky
+    if (fireRound === 2) {
+        // Spawn fireballs from sky
+        if (Math.random() < 0.025) {
+            fireballs.push({
+                x: R(30, W - 30), y: -20,
+                vx: R(-1, 1), vy: R(2, 4),
+                r: R(8, 16), t: 0
+            });
+        }
+
+        // Update fireballs
+        for (let i = fireballs.length - 1; i >= 0; i--) {
+            const fb = fireballs[i];
+            fb.t += dt; fb.x += fb.vx * dt * 60; fb.y += fb.vy * dt * 60; fb.vy += 1.5 * dt * 60;
+
+            // Fireball hits ground → new fire or feeds existing
+            if (fb.y > H * 0.65) {
+                let fedFire = false;
+                for (const f of fires) {
+                    if (!f.dead && dist(fb.x, fb.y, f.x, f.y) < 60) {
+                        f.hp = Math.min(f.hp + 30, 150); // fire grows!
+                        addFloatText('🔥+', f.x, f.y - 30, '#ff6600', 0.6);
+                        fedFire = true; break;
+                    }
+                }
+                if (!fedFire) {
+                    // New fire on ground
+                    fires.push({ x: fb.x, y: H * 0.65 + R(-10, 10), hp: 50, dead: false, t: R(0, 10) });
+                }
+                snd(150, 60, .1, 'sawtooth', .04);
+                fireballs.splice(i, 1);
+                continue;
+            }
+
+            // Fireball hits player → burn wings!
+            if (dist(fb.x, fb.y, player.x, player.y) < fb.r + player.size * 0.6) {
+                wingsBurned = Math.min(wingsBurned + 1, 3);
+                player.shakeT = 0.3;
+                addFloatText('🔥 Wings singed!', player.x, player.y - 40, '#ff4444', 1, 'neg');
+                snd(300, 100, .2, 'sawtooth', .08);
+                score = Math.max(0, score - 5); lvlScore = Math.max(0, lvlScore - 5);
+                fireballs.splice(i, 1);
+                continue;
+            }
+
+            // Fireball hit by water drops → extinguished in air!
+            let hit = false;
+            for (let wi = waterDrops.length - 1; wi >= 0; wi--) {
+                if (dist(waterDrops[wi].x, waterDrops[wi].y, fb.x, fb.y) < fb.r + 6) {
+                    waterDrops.splice(wi, 1);
+                    hit = true; break;
+                }
+            }
+            if (hit) {
+                score += 5; lvlScore += 5;
+                addFloatText('+5 💧', fb.x, fb.y, '#44aaff', 0.8);
+                fireballs.splice(i, 1);
+                continue;
+            }
+
+            if (fb.x < -30 || fb.x > W + 30) fireballs.splice(i, 1);
+        }
+        if (fireballs.length > 20) fireballs.splice(0, fireballs.length - 20);
+
+        // Water drops extinguish burned wings
+        for (let i = waterDrops.length - 1; i >= 0; i--) {
+            if (wingsBurned > 0 && dist(waterDrops[i].x, waterDrops[i].y, player.x, player.y) < player.size * 1.5) {
+                wingsBurned = Math.max(0, wingsBurned - 1);
+                waterDrops.splice(i, 1);
+                addFloatText('💧 Wings cooled!', player.x, player.y - 40, '#44aaff', 1);
+                snd(800, 1200, .1, 'sine', .04);
+            }
+        }
+
+        // Win round 2: all fires out + survived 30s
+        if (fires.every(f => f.dead) && elapsed > 30) {
+            // Check no active fireballs
+            if (fireballs.length === 0 || fires.every(f => f.dead)) doWin();
+        }
+        // Also cap fires — too many = game over threat
+        if (fires.filter(f => !f.dead).length > 12) {
+            addFloatText('🔥🔥🔥 TOO MUCH FIRE!', W / 2, H / 2, '#ff0000', 2, 'big');
+            lives--; snd(200, 60, .4, 'sawtooth', .1);
+            if (lives <= 0) doGameOver();
+            // Kill some fires to give player a chance
+            let killed = 0;
+            for (const f of fires) { if (!f.dead && killed < 4) { f.dead = true; killed++; } }
+        }
+    }
 
     // Beak decay
     player.beakOpen = Math.max(player.beakOpen - dt * 5, 0);
 
-    // Player movement
+    // Player movement — altitude limited by burned wings
+    const maxAlt = wingsBurned >= 3 ? H * 0.55 : wingsBurned >= 2 ? H * 0.35 : wingsBurned >= 1 ? H * 0.2 : 30;
     const spd = player.speed * dt;
     if (keys['ArrowLeft'] || keys['KeyA']) player.vx -= spd * 0.15;
     if (keys['ArrowRight'] || keys['KeyD']) player.vx += spd * 0.15;
@@ -1359,7 +1466,10 @@ function updateLvl8(dt) {
     if (keys['ArrowDown'] || keys['KeyS']) player.vy += spd * 0.15;
     player.vx *= 0.92; player.vy *= 0.92;
     player.x += player.vx; player.y += player.vy;
-    player.x = clamp(player.x, 30, W - 30); player.y = clamp(player.y, 30, H - 30);
+    player.x = clamp(player.x, 30, W - 30);
+    player.y = clamp(player.y, maxAlt, H - 30);
+    // Push player down if above burned limit
+    if (player.y < maxAlt) player.y += (maxAlt - player.y) * 0.1;
 }
 
 // Pour water drops from a popped bubble — drops fall down toward fires
@@ -2012,16 +2122,21 @@ function drawLvl8() {
     // Fires
     for (const f of fires) {
         if (f.dead) continue;
-        const I = f.hp / 100;
-        for (let j = 0; j < 5; j++) {
+        const maxHp = fireRound === 2 ? 150 : 100;
+        const I = Math.min(f.hp / 100, 1.5); // can go above 1 for supercharged fires
+        const flames = I > 1 ? 8 : 5; // more flames for bigger fire
+        for (let j = 0; j < flames; j++) {
             const fx = f.x + Math.sin(f.t * 5 + j * 1.3) * 15 * I;
             const fy = f.y - Math.abs(Math.sin(f.t * 4 + j)) * 40 * I;
-            const grad2 = X.createRadialGradient(fx, fy, 0, fx, fy, 15 * I);
-            grad2.addColorStop(0, `rgba(255,255,100,${0.8 * I})`); grad2.addColorStop(0.5, `rgba(255,100,0,${0.5 * I})`); grad2.addColorStop(1, 'rgba(255,50,0,0)');
-            X.fillStyle = grad2; X.beginPath(); X.arc(fx, fy, 15 * I, 0, Math.PI * 2); X.fill();
+            const fR = 15 * Math.min(I, 1.2);
+            const grad2 = X.createRadialGradient(fx, fy, 0, fx, fy, fR);
+            grad2.addColorStop(0, `rgba(255,255,100,${Math.min(0.8 * I, 1)})`); grad2.addColorStop(0.5, `rgba(255,100,0,${Math.min(0.5 * I, 0.8)})`); grad2.addColorStop(1, 'rgba(255,50,0,0)');
+            X.fillStyle = grad2; X.beginPath(); X.arc(fx, fy, fR, 0, Math.PI * 2); X.fill();
         }
         X.fillStyle = 'rgba(0,0,0,0.5)'; X.fillRect(f.x - 25, f.y - 50, 50, 5);
-        X.fillStyle = I > 0.5 ? '#ff8844' : '#ff4444'; X.fillRect(f.x - 25, f.y - 50, 50 * I, 5);
+        const barPct = Math.min(f.hp / maxHp, 1);
+        X.fillStyle = I > 1 ? '#ff2222' : I > 0.5 ? '#ff8844' : '#ff4444';
+        X.fillRect(f.x - 25, f.y - 50, 50 * barPct, 5);
     }
 
     // Bubbles (water-filled, rising)
@@ -2057,7 +2172,53 @@ function drawLvl8() {
         X.restore();
     });
 
+    // Fireballs (round 2)
+    fireballs.forEach(fb => {
+        X.save();
+        const I = 0.7 + Math.sin(fb.t * 15) * 0.3;
+        // Fireball glow
+        const fbg = X.createRadialGradient(fb.x, fb.y, 0, fb.x, fb.y, fb.r * 1.5);
+        fbg.addColorStop(0, `rgba(255,255,100,${I})`);
+        fbg.addColorStop(0.4, `rgba(255,120,0,${I * 0.7})`);
+        fbg.addColorStop(1, 'rgba(255,50,0,0)');
+        X.fillStyle = fbg;
+        X.beginPath(); X.arc(fb.x, fb.y, fb.r * 1.5, 0, Math.PI * 2); X.fill();
+        // Core
+        X.fillStyle = '#ffee44';
+        X.beginPath(); X.arc(fb.x, fb.y, fb.r * 0.5, 0, Math.PI * 2); X.fill();
+        // Trail
+        X.globalAlpha = 0.3;
+        X.fillStyle = '#ff6600';
+        for (let t = 1; t <= 3; t++) {
+            X.beginPath(); X.arc(fb.x - fb.vx * t * 3, fb.y - fb.vy * t * 2, fb.r * (0.4 - t * 0.08), 0, Math.PI * 2); X.fill();
+        }
+        X.restore();
+    });
+
     drawPlayerBird();
+
+    // Wing burn indicator
+    if (wingsBurned > 0) {
+        X.save(); X.textAlign = 'center'; X.font = 'bold 13px Arial';
+        X.fillStyle = wingsBurned >= 3 ? '#ff2222' : wingsBurned >= 2 ? '#ff6600' : '#ffaa00';
+        X.fillText('🔥'.repeat(wingsBurned) + ' Wings burned!', player.x, player.y + player.size + 15);
+        // Altitude limit line
+        const maxAlt = wingsBurned >= 3 ? H * 0.55 : wingsBurned >= 2 ? H * 0.35 : H * 0.2;
+        X.strokeStyle = `rgba(255,100,0,${0.2 + Math.sin(elapsed * 3) * 0.1})`;
+        X.lineWidth = 1; X.setLineDash([8, 8]);
+        X.beginPath(); X.moveTo(0, maxAlt); X.lineTo(W, maxAlt); X.stroke();
+        X.setLineDash([]);
+        X.restore();
+    }
+
+    // Round indicator
+    if (fireRound === 2) {
+        X.save(); X.font = 'bold 16px Arial'; X.textAlign = 'right';
+        X.fillStyle = '#ff8844';
+        X.fillText('ROUND 2 — Firestorm', W - 15, 80);
+        X.restore();
+    }
+
     if (superPower > 0) { X.fillStyle = '#44ff88'; X.font = 'bold 14px Arial'; X.textAlign = 'center'; X.fillText(`⚡ Superpower: ${superPower}`, player.x, player.y - 45); }
 }
 
