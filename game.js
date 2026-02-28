@@ -968,16 +968,17 @@ function updateBubbleLevels(dt) {
         }
     }
 
-    // Mouse click pops bubbles
-    if (mouseClicked) {
-        mouseClicked = false;
-        for (let i = 0; i < bubbles.length; i++) {
-            if (bubbles[i].pop) continue;
-            if (dist(mouseX, mouseY, bubbles[i].x, bubbles[i].y) < bubbles[i].r + 5) {
-                popBubble2D(i, false); break;
-            }
-        }
-    }
+    // REMOVED: Mouse click pops bubbles (arrows-only mode)
+    // if (mouseClicked) {
+    //     mouseClicked = false;
+    //     for (let i = 0; i < bubbles.length; i++) {
+    //         if (bubbles[i].pop) continue;
+    //         if (dist(mouseX, mouseY, bubbles[i].x, bubbles[i].y) < bubbles[i].r + 5) {
+    //             popBubble2D(i, false); break;
+    //         }
+    //     }
+    // }
+    if (mouseClicked) mouseClicked = false;
 
     // ---- UPDATE BUBBLES ----
     for (let i = bubbles.length - 1; i >= 0; i--) {
@@ -985,11 +986,11 @@ function updateBubbleLevels(dt) {
         if (b.pop) { b.pT += dt * 3; if (b.pT >= 1) { bubbles.splice(i, 1); } continue; }
         b.y -= b.speedY * speedMul * slowF * dt * 60;
         b.x += Math.sin(b.t * b.wobbleSpd + b.wobbleOff) * b.wobbleAmp + windX * 0.5 * dt * 60;
-        // Magnet
-        if (activePU && activePU.type === 'magnet') {
-            const dx = mouseX - b.x, dy = mouseY - b.y, d = Math.hypot(dx, dy);
-            if (d > 10) { b.x += dx / d * 2; b.y += dy / d * 2; }
-        }
+        // REMOVED: Magnet power-up (removed from game)
+        // if (activePU && activePU.type === 'magnet') {
+        //     const dx = player.x - b.x, dy = player.y - b.y, d = Math.hypot(dx, dy);
+        //     if (d > 10) { b.x += dx / d * 2; b.y += dy / d * 2; }
+        // }
         if (b.y < -b.r * 2 || b.x < -50 || b.x > W + 50) bubbles.splice(i, 1);
     }
 
@@ -1238,13 +1239,13 @@ function updateNest(dt) {
 }
 
 function activatePU2D(x, y) {
-    const types = ['freeze', 'bomb', 'slow', 'magnet'];
+    const types = ['freeze', 'bomb', 'slow'];
+    // REMOVED: 'magnet' from power-ups (not obvious without mouse)
     const t = types[Math.floor(Math.random() * types.length)];
     snd(500, 1100, .15, 'sine', .08);
     if (t === 'freeze') { activePU = { type: 'freeze', timer: 5 }; addFloatText('❄️ FREEZE!', x, y, '#88ddff', 1.5, 'big'); }
     else if (t === 'bomb') { addFloatText('💣 BOOM!', x, y, '#ff4444', 1.5, 'big'); bubbles.forEach((b, i) => { if (!b.pop && !b.isTrap) { score += b.r < 28 ? 5 : 3; lvlScore += b.r < 28 ? 5 : 3; b.pop = true; b.pT = 0; } }); }
-    else if (t === 'slow') { activePU = { type: 'slow', timer: 5 }; addFloatText('🐌 SLOW-MO!', x, y, '#aaddff', 1.5, 'big'); }
-    else { activePU = { type: 'magnet', timer: 5 }; addFloatText('🧲 MAGNET!', x, y, '#ff44ff', 1.5, 'big'); }
+    else { activePU = { type: 'slow', timer: 5 }; addFloatText('🐌 SLOW-MO!', x, y, '#aaddff', 1.5, 'big'); }
 }
 
 function spawnBoss2D() {
@@ -1261,12 +1262,13 @@ function updateBoss2D(dt) {
         for (let i = 0; i < bubbles.length; i++) { if (!bubbles[i].pop && dist(bb.x, bb.y, bubbles[i].x, bubbles[i].y) < 60) { popBubble2D(i, true); bb.popsLeft--; if (bb.popsLeft <= 0) { bossBird = null; addFloatText('🦅 flew away...', W / 2, H * 0.3, '#aaa', 1.5); return; } } }
         if (bb.t > 15) { bossBird = null; return; }
     }
-    // Click on boss
-    if (mouseClicked && dist(mouseX, mouseY, bb.x, bb.y) < bb.size) {
-        bb.hp--; snd(200, 80, .2, 'sawtooth', .1); addFloatText('💥-' + (3 - bb.hp) + '/3', bb.x, bb.y - 30, '#ff4444', 1);
-        if (bb.hp <= 0) { score += 25; lvlScore += 25; addFloatText('+25 BOSS!', bb.x, bb.y, '#44ff88', 1.5, 'big'); bossBird = null; }
-        mouseClicked = false;
-    }
+    // REMOVED: Click on boss (arrows-only mode — ram boss with player bird instead)
+    // if (mouseClicked && dist(mouseX, mouseY, bb.x, bb.y) < bb.size) {
+    //     bb.hp--; snd(200, 80, .2, 'sawtooth', .1); addFloatText('💥-' + (3 - bb.hp) + '/3', bb.x, bb.y - 30, '#ff4444', 1);
+    //     if (bb.hp <= 0) { score += 25; lvlScore += 25; addFloatText('+25 BOSS!', bb.x, bb.y, '#44ff88', 1.5, 'big'); bossBird = null; }
+    //     mouseClicked = false;
+    // }
+    if (mouseClicked) mouseClicked = false;
     // Player bird hit boss
     if (dist(player.x, player.y, bb.x, bb.y) < bb.size + player.size) {
         bb.hp--; snd(200, 80, .2, 'sawtooth', .1);
@@ -1311,21 +1313,21 @@ function updateLvl8(dt) {
             score += 3; lvlScore += 3;
         }
     }
-    // Mouse click pops bubbles → water pours out
-    if (mouseClicked) {
-        mouseClicked = false;
-        for (let i = 0; i < bubbles.length; i++) {
-            if (bubbles[i].pop) continue;
-            if (dist(mouseX, mouseY, bubbles[i].x, bubbles[i].y) < bubbles[i].r + 5) {
-                pourWaterFromBubble(bubbles[i]);
-                bubbles[i].pop = true; bubbles[i].pT = 0;
-                for (let j = 0; j < 4; j++) fragments.push({ x: bubbles[i].x, y: bubbles[i].y, vx: R(-3, 3), vy: R(-4, 1), r: R(2, 4), life: 0.5, color: '#4488ff' });
-                score += 3; lvlScore += 3;
-                snd(800 + Math.random() * 400, 200, .15, 'sine', .1);
-                break;
-            }
-        }
-    }
+    // REMOVED: Mouse click pops bubbles → water pours out (arrows-only mode)
+    // if (mouseClicked) {
+    //     mouseClicked = false;
+    //     for (let i = 0; i < bubbles.length; i++) {
+    //         if (bubbles[i].pop) continue;
+    //         if (dist(mouseX, mouseY, bubbles[i].x, bubbles[i].y) < bubbles[i].r + 5) {
+    //             pourWaterFromBubble(bubbles[i]);
+    //             bubbles[i].pop = true; bubbles[i].pT = 0;
+    //             for (let j = 0; j < 4; j++) fragments.push({ x: bubbles[i].x, y: bubbles[i].y, vx: R(-3, 3), vy: R(-4, 1), r: R(2, 4), life: 0.5, color: '#4488ff' });
+    //             score += 3; lvlScore += 3;
+    //             snd(800 + Math.random() * 400, 200, .15, 'sine', .1);
+    //             break;
+    //         }
+    //     }
+    if (mouseClicked) mouseClicked = false;
 
     // Update bubbles (rise up, wobble)
     for (let i = bubbles.length - 1; i >= 0; i--) {
@@ -1958,7 +1960,7 @@ function drawHUD() {
     // Powerup
     if (activePU) {
         X.fillStyle = 'rgba(255,215,0,0.3)';
-        const pText = { freeze: '❄️ Freeze', slow: '🐌 Slow-Mo', magnet: '🧲 Magnet' }[activePU.type] || '';
+        const pText = { freeze: '❄️ Freeze', slow: '🐌 Slow-Mo' }[activePU.type] || '';
         if (pText) {
             const pw = X.measureText(pText).width;
             roundRect(W / 2 - pw / 2 - 15, H - 45, pw + 30, 35, 10); X.fill();
@@ -2038,11 +2040,12 @@ function drawMenu() {
     roundRect(W / 2 - 80, H / 2 + 130, 160, 45, 12); X.fill();
     X.fillStyle = '#fff'; X.font = 'bold 22px Arial'; X.fillText('PLAY', W / 2, H / 2 + 158);
 
-    // Click handler for menu
+    // Click or key handler for menu
     if (mouseClicked) {
         mouseClicked = false;
         if (mouseX > W / 2 - 80 && mouseX < W / 2 + 80 && mouseY > H / 2 + 130 && mouseY < H / 2 + 175) startGame();
     }
+    if (keys['Space'] || keys['Enter']) { keys['Space'] = false; keys['Enter'] = false; startGame(); }
 }
 
 function drawTransition(dt) {
@@ -2077,7 +2080,7 @@ function drawTransition(dt) {
     // "Click to continue" — blink
     X.fillStyle = '#4CAF50'; X.globalAlpha = 0.6 + Math.sin(elapsed * 4) * 0.3;
     X.font = 'bold 22px Arial';
-    X.fillText('[ Click to continue ]', W / 2, H / 2 + 90);
+    X.fillText('[ Press Space to continue ]', W / 2, H / 2 + 90);
 
     X.restore();
 
@@ -2104,6 +2107,7 @@ function drawEndScreen(title) {
     X.fillStyle = '#4CAF50'; roundRect(W / 2 - 80, H / 2 + 110, 160, 45, 12); X.fill();
     X.fillStyle = '#fff'; X.font = 'bold 20px Arial'; X.fillText('RETRY', W / 2, H / 2 + 138);
     if (mouseClicked) { mouseClicked = false; if (mouseX > W / 2 - 80 && mouseX < W / 2 + 80 && mouseY > H / 2 + 110 && mouseY < H / 2 + 155) startGame(); }
+    if (keys['Space'] || keys['Enter']) { keys['Space'] = false; keys['Enter'] = false; startGame(); }
 }
 
 function roundRect(x, y, w, h, r) { X.beginPath(); X.moveTo(x + r, y); X.lineTo(x + w - r, y); X.arcTo(x + w, y, x + w, y + r, r); X.lineTo(x + w, y + h - r); X.arcTo(x + w, y + h, x + w - r, y + h, r); X.lineTo(x + r, y + h); X.arcTo(x, y + h, x, y + h - r, r); X.lineTo(x, y + r); X.arcTo(x, y, x + r, y, r); X.closePath(); }
