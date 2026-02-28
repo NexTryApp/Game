@@ -1153,6 +1153,30 @@ function updateNest(dt) {
     // Grown chicks (level 9+) get hungry faster
     nest.chicks.forEach(ch => {
         if (!isNight) ch.hungry += dt * (ch.grown ? 1.2 : 0.6);
+        // Starving penalty: hungry > 8 → lose points over time
+        if (ch.hungry > 8) {
+            const penalty = Math.floor(dt * 3);
+            if (penalty > 0) {
+                score = Math.max(0, score - penalty);
+                lvlScore = Math.max(0, lvlScore - penalty);
+            }
+            // Show warning once when crossing threshold
+            if (ch.hungry > 8 && ch.hungry - dt * (ch.grown ? 1.2 : 0.6) <= 8) {
+                addFloatText('⚠️ Chick starving! -pts', nest.x, nest.y - 40, '#ff6600', 1.5, 'neg');
+                snd(400, 200, .15, 'sawtooth', .06);
+            }
+        }
+        // Starvation death: hungry > 15 → chick dies
+        if (ch.hungry > 15) {
+            ch.hp = 0;
+            const penalty = 20;
+            score = Math.max(0, score - penalty);
+            lvlScore = Math.max(0, lvlScore - penalty);
+            addFloatText(`-${penalty} 💀 Starved!`, nest.x, nest.y - 40, '#ff0000', 2, 'big');
+            snd(200, 60, .4, 'sawtooth', .1);
+            lives--;
+            if (lives <= 0) doGameOver();
+        }
     });
 
     // Player carrying gnat/worm → deliver to nest
@@ -1191,7 +1215,10 @@ function updateNest(dt) {
                     snd(350, 150, .2, 'sawtooth', .08);
                     player.shakeT = 0.2;
                     if (victim.hp <= 0) {
-                        addFloatText('💀 Chick lost!', nest.x, nest.y - 40, '#ff0000', 2, 'big');
+                        const penalty = 20;
+                        score = Math.max(0, score - penalty);
+                        lvlScore = Math.max(0, lvlScore - penalty);
+                        addFloatText(`-${penalty} 💀 Chick lost!`, nest.x, nest.y - 40, '#ff0000', 2, 'big');
                         snd(200, 60, .5, 'sawtooth', .1);
                         lives--;
                         if (lives <= 0) doGameOver();
@@ -1697,7 +1724,10 @@ function updateLvl9(dt) {
                         nest.chicks.forEach(ch => {
                             ch.hp--;
                             if (ch.hp <= 0) {
-                                addFloatText('💀 Chick fell!', nest.x, nest.y - 30, '#ff0000', 2, 'big');
+                                const penalty = 25;
+                                score = Math.max(0, score - penalty);
+                                lvlScore = Math.max(0, lvlScore - penalty);
+                                addFloatText(`-${penalty} 💀 Chick fell!`, nest.x, nest.y - 30, '#ff0000', 2, 'big');
                                 snd(200, 60, .4, 'sawtooth', .1);
                                 lives--;
                                 if (lives <= 0) doGameOver();
